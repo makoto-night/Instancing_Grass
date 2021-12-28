@@ -5,6 +5,7 @@
 #include "DirectX11Manager.h"
 #include "Input.h"
 #include "ModelRenderer.h"
+#include "PoissonGenerator.h"
 
 vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData, float density);
 
@@ -128,16 +129,21 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	g_commonBuffer.mtxWorld = XMMatrixIdentity();
 	g_commonBuffer.lightDir = { 1,1,0,0 };
 
-
-	//草を生やすポイントのリストを作成
+	
 	vector<XMMATRIX> instancingMtx;
-	for (int i = 0; i < 10000; i++)
+	//ポアソンディスクサンプリングで草を生やすポイントを生成する
+	PoissonGenerator::DefaultPRNG PRNG;
+	auto poissonPoints = PoissonGenerator::generatePoissonPoints(10000, PRNG);
+	vector<XMVECTOR> grassPositions;
+	for (int i = 0; i < poissonPoints.size(); i++)
 	{
-		//x,z(-20,-20)～x,z(20,20)のランダムな位置にポイントを生成
-		XMVECTOR pos = { (rand() % 4000 - 2000) * 0.01f,0,(rand() % 4000 - 2000) * 0.01f };
-		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(pos));
+		float grassPosX = (poissonPoints[i].x - 0.5f) * 40;
+		float grassPosZ = (poissonPoints[i].y - 0.5f) * 40;
+		XMVECTOR grassPos = XMVectorSet(grassPosX, 0, grassPosZ, 0);
+		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(grassPos));
 		instancingMtx.push_back(mtx);
 	}
+
 	//インスタンシング用に行列とそのバッファを作成
 	VertexBuffer instancingMtxBuff;
 	instancingMtxBuff.Attach(g_manager.CreateVertexBuffer(instancingMtx.data(), static_cast<int>(instancingMtx.size())));
