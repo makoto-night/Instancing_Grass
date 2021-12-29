@@ -27,12 +27,41 @@ struct PS_INPUT
 	float3 Nor : NORMAL;
 };
 
+//疑似乱数
+float GetRandomNumber(float2 texCoord, int Seed)
+{
+	return frac(sin(dot(texCoord.xy, float2(12.9898, 78.233)) + Seed) * 43758.5453);
+}
+
 PS_INPUT vsMain(VS_INPUT input)
 {
 	PS_INPUT o = (PS_INPUT)0;
 
 	float4 localPosition = float4(input.Pos, 1.0f);
+
+	//座標が0に近い場所は草の背丈を低くする
+	localPosition.y *= input.posMtx[3].y;
+	localPosition.y = clamp(0, 1.0, localPosition.y);
+
 	float4 worldPosition = mul(localPosition, input.posMtx);
+
+	float trailTime = time.x * 0.02f;//揺らす速度
+	float trailMagnitude = 0.1f;//揺らす幅
+
+	//現在の時間(フレーム)とsin関数を使って疑似的に風に揺れているようにする
+	float3 windAdd = float3(sin(trailTime + worldPosition.x * 0.1f) * trailMagnitude, 0, 0);
+
+	//揺れにばらつきを持たせるためのランダム数値
+	float random = GetRandomNumber(float2(worldPosition.x, worldPosition.y), 0) * 100;
+	//全部一緒に揺れると不自然なので適度にばらつかせる
+	float3 positionAdd = float3(sin(trailTime - random) * trailMagnitude, 0, 0);
+
+	//葉先だけ揺らすためにローカル座標のyを掛ける
+	positionAdd *= input.Pos.y;
+	windAdd *= input.Pos.y;
+	//ワールド座標に揺れを加算する
+	worldPosition.xyz += positionAdd + windAdd;
+
 	float4 viewPosition = mul(worldPosition, mtxView);
 	float4 projPosition = mul(viewPosition, mtxProj);
 
