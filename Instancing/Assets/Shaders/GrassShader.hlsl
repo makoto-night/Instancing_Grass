@@ -33,6 +33,25 @@ float GetRandomNumber(float2 texCoord, int Seed)
 	return frac(sin(dot(texCoord.xy, float2(12.9898, 78.233)) + Seed) * 43758.5453);
 }
 
+float3 rotate(float3 p, float angle, float3 axis) {
+	float3 a = normalize(axis);
+	float s = sin(angle);
+	float c = cos(angle);
+	float r = 1.0 - c;
+	float3x3 m = float3x3(
+		a.x * a.x * r + c,
+		a.y * a.x * r + a.z * s,
+		a.z * a.x * r - a.y * s,
+		a.x * a.y * r - a.z * s,
+		a.y * a.y * r + c,
+		a.z * a.y * r + a.x * s,
+		a.x * a.z * r + a.y * s,
+		a.y * a.z * r - a.x * s,
+		a.z * a.z * r + c
+		);
+	return mul(p, m);
+}
+
 PS_INPUT vsMain(VS_INPUT input)
 {
 	PS_INPUT o = (PS_INPUT)0;
@@ -68,7 +87,13 @@ PS_INPUT vsMain(VS_INPUT input)
 	o.Pos = projPosition;
 	o.Col = input.Col;
 	o.Tex = input.Tex;
-	o.Nor = mul(input.Nor, input.posMtx);
+
+	//メッシュの法線ではなく、揺れを元に法線の代わりにする
+	o.Nor = float3(1,0,1);
+	float rotatePower = 3.0f;
+	o.Nor = rotate(o.Nor, (positionAdd + windAdd) * rotatePower, float3(1, 0, 0));
+	o.Nor = normalize(o.Nor);
+
 	return o;
 }
 
@@ -76,7 +101,7 @@ float4 psMain(PS_INPUT input) : SV_TARGET
 {
 	float4 result = 0;
 	result = Diffuse.Sample(samLinear, input.Tex) * input.Col;
-	
+
 	//法線とライトから最低限の陰影をつける
 	float3 nor = normalize(input.Nor);
 	float dLight = dot(nor, normalize(lightDir.xyz)) * 0.5 + 0.5;
