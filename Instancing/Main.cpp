@@ -7,7 +7,7 @@
 #include "ModelRenderer.h"
 #include "PoissonGenerator.h"
 
-vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData, float density);
+vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData);
 
 DirectX11Manager g_manager;
 CommonConstantBuffer g_commonBuffer;
@@ -129,25 +129,25 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	g_commonBuffer.mtxWorld = XMMatrixIdentity();
 	g_commonBuffer.lightDir = { 1,1,0,0 };
 
-	
-	vector<XMMATRIX> instancingMtx;
-	//ポアソンディスクサンプリングで草を生やすポイントを生成する
-	PoissonGenerator::DefaultPRNG PRNG;
-	auto poissonPoints = PoissonGenerator::generatePoissonPoints(10000, PRNG);
-	vector<XMVECTOR> grassPositions;
-	for (int i = 0; i < poissonPoints.size(); i++)
-	{
-		float grassPosX = (poissonPoints[i].x - 0.5f) * 40;
-		float grassPosZ = (poissonPoints[i].y - 0.5f) * 40;
-		XMVECTOR grassPos = XMVectorSet(grassPosX, 0, grassPosZ, 0);
-		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(grassPos));
-		instancingMtx.push_back(mtx);
-	}
+	//草を生やすベースになる島のモデルを読み込み
+	ModelRenderer islandRenderer;
+	islandRenderer.LoadAssimp("Assets/Models/Island.fbx");
+
+	//草を生やすポイントのリストを作成
+	auto grassPosData = CreateGrassPositionData(islandRenderer.modelData[1]);
 
 	//インスタンシング用に行列とそのバッファを作成
+	vector<XMMATRIX> instancingMtx;
+	for (int i = 0; i < grassPosData.size(); i++)
+	{
+		XMVECTOR pos = grassPosData[i];
+		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(pos));
+		instancingMtx.push_back(mtx);
+	}
 	VertexBuffer instancingMtxBuff;
-	instancingMtxBuff.Attach(g_manager.CreateVertexBuffer(instancingMtx.data(), static_cast<int>(instancingMtx.size())));
-
+	instancingMtxBuff.
+		Attach(g_manager.CreateVertexBuffer(instancingMtx.data(), static_cast<int>(instancingMtx.size())));
+	
 	//頂点情報としてセットで渡せるように配列にする
 	ID3D11Buffer* const vbuffer[] = {
 		vb.Get(),
@@ -216,6 +216,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			0, // 頂点バッファの最初から使う
 			0);
 
+		//島描画
+		islandRenderer.Draw();
+
 		g_manager.DrawEnd();
 
 		//FPS制御
@@ -227,4 +230,111 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	}
 
 	return 0;
+}
+
+struct Triangle
+{
+	XMVECTOR v0;
+	XMVECTOR v1;
+	XMVECTOR v2;
+};
+
+struct Hit
+{
+	bool hit = false;
+	XMVECTOR pos;
+	float distance = 0;
+};
+
+
+float Dot(XMVECTOR vecA, XMVECTOR vecB, XMVECTOR vecC)
+{
+	return ((vecA.m128_f32[0] * vecB.m128_f32[1] * vecC.m128_f32[2]) + (vecA.m128_f32[1] * vecB.m128_f32[2] * vecC.
+		m128_f32[0]) + (vecA.m128_f32[2] * vecB.m128_f32[0] * vecC.m128_f32[1]) - (vecA.m128_f32[0] * vecB.m128_f32[2] *
+			vecC.m128_f32[1]) - (vecA.m128_f32[1] * vecB.m128_f32[0] * vecC.m128_f32[2]) - (vecA.m128_f32[2] * vecB.m128_f32
+				[1] * vecC.m128_f32[0]));
+}
+
+//レイと三角形ポリゴンとの当たり判定
+Hit RayIntersectsTriangle(XMVECTOR origin, XMVECTOR ray, XMVECTOR v0, XMVECTOR v1, XMVECTOR v2)
+{
+	Hit ret;
+
+	XMVECTOR invRay = -ray;
+	XMVECTOR edge1 = v1 - v0;
+	XMVECTOR edge2 = v2 - v0;
+
+	float denominator = Dot(edge1, edge2, invRay);
+
+	if (denominator <= 0)
+	{
+		return ret;
+	}
+
+	XMVECTOR d = origin - v0;
+
+	float u = Dot(d, edge2, invRay) / denominator;
+	if ((u >= 0) && (u <= 1))
+	{
+		float v = Dot(edge1, d, invRay) / denominator;
+		if ((v >= 0) && (u + v <= 1))
+		{
+			float t = Dot(edge1, edge2, d) / denominator;
+
+			if (t < 0)
+			{
+				return ret;
+			}
+
+			XMVECTOR tmp = ray * t;
+			ret.pos = origin + tmp;
+			ret.hit = true;
+			ret.distance = t;
+		}
+	}
+
+	return ret;
+}
+
+//diameter=>直径,density=>密度(1*1の範囲あたり何本生やすか)
+vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData)
+{
+	//島のメッシュから三角形のリストを作成
+	vector<Triangle> meshTriangles;
+	vector<UINT> index = modelData.index;
+	vector<ModelRenderer::VertexData> vertexData = modelData.vertexData;
+	UINT i = 0;
+	while (i < modelData.index.size())
+	{
+		Triangle tmpTriangle;
+		tmpTriangle.v0 = XMVectorSet(vertexData[index[i]].pos.x, vertexData[index[i]].pos.y, vertexData[index[i]].pos.z, 1);
+		i++;
+		tmpTriangle.v1 = XMVectorSet(vertexData[index[i]].pos.x, vertexData[index[i]].pos.y, vertexData[index[i]].pos.z, 1);
+		i++;
+		tmpTriangle.v2 = XMVectorSet(vertexData[index[i]].pos.x, vertexData[index[i]].pos.y, vertexData[index[i]].pos.z, 1);
+		i++;
+		meshTriangles.push_back(tmpTriangle);
+	}
+
+	//草を生やすポイントを計算し作成する
+	PoissonGenerator::DefaultPRNG PRNG;
+	auto poissonPoints = PoissonGenerator::generatePoissonPoints(10000, PRNG);
+	vector<XMVECTOR> grassPositions;
+	for (int i = 0; i < poissonPoints.size(); i++)
+	{
+		float grassPosX = (poissonPoints[i].x - 0.5f) * 60;
+		float grassPosY = (poissonPoints[i].y - 0.5f) * 60;
+
+		//レイを上から下に飛ばすため、yを高めに設定しておく
+		XMVECTOR grassPos = XMVectorSet(grassPosX, 500, grassPosY, 0);
+
+		//１つ１つのポリゴンに対して衝突判定を行う
+		for (auto t : meshTriangles)
+		{
+			Hit hit = RayIntersectsTriangle(grassPos, XMVectorSet(0, -1000, 0, 0), t.v0, t.v1, t.v2);
+			if (hit.hit) //Hitした場合草を生やすポジションとして追加する
+				grassPositions.push_back(XMVectorSet(hit.pos.m128_f32[0], hit.pos.m128_f32[1], hit.pos.m128_f32[2], 1));
+		}
+	}
+	return grassPositions;
 }

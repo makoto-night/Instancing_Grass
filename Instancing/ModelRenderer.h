@@ -29,7 +29,7 @@ struct ShaderElement
 	void SetShader(string filename)
 	{
 		VertexShader.Attach(g_manager.CreateVertexShader(filename, "vsMain"));
-		GeometryShader.Attach(g_manager.CreateGeometryShader(filename, "gsMain"));
+		//GeometryShader.Attach(g_manager.CreateGeometryShader(filename, "gsMain"));
 		PixelShader.Attach(g_manager.CreatePixelShader(filename, "psMain"));
 		InputLayout.Attach(g_manager.CreateInputLayoutReflection(filename, "vsMain"));
 	};
