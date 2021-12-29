@@ -7,7 +7,8 @@
 #include "ModelRenderer.h"
 #include "PoissonGenerator.h"
 
-vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData);
+vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData, float diameter, float density);
+VertexBuffer CreateGrassMatrixBuffer(vector<XMVECTOR> grassPosData);
 
 DirectX11Manager g_manager;
 CommonConstantBuffer g_commonBuffer;
@@ -134,29 +135,12 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	islandRenderer.LoadAssimp("Assets/Models/Island.fbx");
 
 	//草を生やすポイントのリストを作成
-	auto grassPosData = CreateGrassPositionData(islandRenderer.modelData[1]);
+	float grassDensity = 200;
+	auto grassPosData = CreateGrassPositionData(islandRenderer.modelData[1], 60, grassDensity);
 
-	//インスタンシング用に行列とそのバッファを作成
-	vector<XMMATRIX> instancingMtx;
-	for (int i = 0; i < grassPosData.size(); i++)
-	{
-		XMVECTOR pos = grassPosData[i];
-		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(pos));
-		instancingMtx.push_back(mtx);
-	}
-	VertexBuffer instancingMtxBuff;
-	instancingMtxBuff.
-		Attach(g_manager.CreateVertexBuffer(instancingMtx.data(), static_cast<int>(instancingMtx.size())));
-	
-	//頂点情報としてセットで渡せるように配列にする
-	ID3D11Buffer* const vbuffer[] = {
-		vb.Get(),
-		instancingMtxBuff.Get()
-	};
-	// それぞれのストライドをセット
-	unsigned int stride[2] = { sizeof(Vertex), sizeof(XMMATRIX) };
-	// オフセットをセット
-	unsigned offset[2] = { 0, 0 };
+	//インスタンシング用のバッファを作成
+	VertexBuffer instancingMtxBuff = CreateGrassMatrixBuffer(grassPosData);
+
 
 	MSG msg = { nullptr };
 	while (true)
@@ -182,10 +166,36 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 			xAngle += Input::GetMouseMovePos().Y * 0.1f;
 			yAngle += Input::GetMouseMovePos().X * 0.1f;
 		}
-		cameraPos += cameraMtx.r[2] * Input::GetMoveMouseWheel()* 0.01f;
+		cameraPos += cameraMtx.r[2] * Input::GetMoveMouseWheel() * 0.01f;
 
 		cameraMtx = XMMatrixIdentity() * XMMatrixRotationQuaternion(XMQuaternionRotationRollPitchYaw(XMConvertToRadians(xAngle), XMConvertToRadians(yAngle), 0));
 
+		if (Input::GetKeyDown(DIK_UP))
+		{
+			grassDensity += 10;
+			grassPosData = CreateGrassPositionData(islandRenderer.modelData[1], 60, grassDensity);
+			instancingMtxBuff = CreateGrassMatrixBuffer(grassPosData);
+		}
+		if (Input::GetKeyDown(DIK_DOWN))
+		{
+			grassDensity -= 10;
+			grassDensity = std::max(0.0f, grassDensity);
+			grassPosData = CreateGrassPositionData(islandRenderer.modelData[1], 60, grassDensity);
+			instancingMtxBuff = CreateGrassMatrixBuffer(grassPosData);
+		}
+		if (Input::GetKeyDown(DIK_RIGHT))
+		{
+			grassDensity += 100;
+			grassPosData = CreateGrassPositionData(islandRenderer.modelData[1], 60, grassDensity);
+			instancingMtxBuff = CreateGrassMatrixBuffer(grassPosData);
+		}
+		if (Input::GetKeyDown(DIK_LEFT))
+		{
+			grassDensity -= 100;
+			grassDensity = std::max(0.0f, grassDensity);
+			grassPosData = CreateGrassPositionData(islandRenderer.modelData[1], 60, grassDensity);
+			instancingMtxBuff = CreateGrassMatrixBuffer(grassPosData);
+		}
 
 		//カメラ更新
 		g_commonBuffer.mtxView = XMMatrixTranspose(XMMatrixLookAtLH(
@@ -204,14 +214,26 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 		g_manager.SetVertexShader(vs.Get());
 		g_manager.SetPixelShader(ps.Get());
 		g_manager.SetInputLayout(inputLayout.Get());
+
+
+		//頂点情報としてセットで渡せるように配列にする
+		ID3D11Buffer* const vbuffer[] = {
+			vb.Get(),
+			instancingMtxBuff.Get()
+		};
+		// それぞれのストライドをセット
+		unsigned int stride[2] = { sizeof(Vertex), sizeof(XMMATRIX) };
+		// オフセットをセット
+		unsigned offset[2] = { 0, 0 };
 		g_manager.m_pImContext->IASetVertexBuffers(0, 2, vbuffer, stride, offset);
+
 		g_manager.SetIndexBuffer(ib.Get());
 		g_manager.SetTexture2D(0, texture.Get());
 
 		//DrawCall
 		g_manager.m_pImContext->DrawIndexedInstanced(
 			idxs.size(), // 描画するインデックス数(Face*3)
-			static_cast<UINT>(instancingMtx.size()), // 繰り返し描画回数
+			static_cast<UINT>(grassPosData.size()), // 繰り返し描画回数
 			0, // 最初のインデックスバッファの位置
 			0, // 頂点バッファの最初から使う
 			0);
@@ -297,7 +319,7 @@ Hit RayIntersectsTriangle(XMVECTOR origin, XMVECTOR ray, XMVECTOR v0, XMVECTOR v
 }
 
 //diameter=>直径,density=>密度(1*1の範囲あたり何本生やすか)
-vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData)
+vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData, float diameter, float density)
 {
 	//島のメッシュから三角形のリストを作成
 	vector<Triangle> meshTriangles;
@@ -318,12 +340,12 @@ vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData)
 
 	//草を生やすポイントを計算し作成する
 	PoissonGenerator::DefaultPRNG PRNG;
-	auto poissonPoints = PoissonGenerator::generatePoissonPoints(10000, PRNG);
+	auto poissonPoints = PoissonGenerator::generatePoissonPoints(density * diameter, PRNG);
 	vector<XMVECTOR> grassPositions;
 	for (int i = 0; i < poissonPoints.size(); i++)
 	{
-		float grassPosX = (poissonPoints[i].x - 0.5f) * 60;
-		float grassPosY = (poissonPoints[i].y - 0.5f) * 60;
+		float grassPosX = (poissonPoints[i].x - 0.5f) * diameter;
+		float grassPosY = (poissonPoints[i].y - 0.5f) * diameter;
 
 		//レイを上から下に飛ばすため、yを高めに設定しておく
 		XMVECTOR grassPos = XMVectorSet(grassPosX, 500, grassPosY, 0);
@@ -337,4 +359,20 @@ vector<XMVECTOR> CreateGrassPositionData(ModelRenderer::ModelData& modelData)
 		}
 	}
 	return grassPositions;
+}
+
+VertexBuffer CreateGrassMatrixBuffer(vector<XMVECTOR> grassPosData)
+{
+	vector<XMMATRIX> instancingMtx;
+	for (int i = 0; i < grassPosData.size(); i++)
+	{
+		XMVECTOR pos = grassPosData[i];
+		XMMATRIX mtx = XMMatrixTranspose(XMMatrixTranslationFromVector(pos));
+		instancingMtx.push_back(mtx);
+	}
+	VertexBuffer instancingMtxBuff;
+	instancingMtxBuff.
+		Attach(g_manager.CreateVertexBuffer(instancingMtx.data(), static_cast<int>(instancingMtx.size())));
+
+	return instancingMtxBuff;
 }
